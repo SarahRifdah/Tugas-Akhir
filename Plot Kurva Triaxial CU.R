@@ -27,12 +27,31 @@ ggplot(df %>% melt(id.vars = NULL),
   labs(title = "Histograms of Data Distribution")
 
 #Split data train dan test
+library(caTools)
+jumlah_baris_unik <- length(unique(df$Sampel))
+jumlah_training <- round(0.7 * jumlah_baris_unik)
 set.seed(123)
-proporsi_training<-0.7
-jumlah_training<-floor(proporsi_training*nrow(df))
-indeks_training<-sample(seq_len(nrow(df)),size=jumlah_training)
-data_training<-df[indeks_training,]
-data_testing<-df[-indeks_training,]
+indeks_acak <- sample(1:jumlah_baris_unik)
+data_training <- df[df$Sampel %in% unique(df$Sampel)
+                    [indeks_acak[1:jumlah_training]], ]
+data_testing <- df[df$Sampel %in% unique(df$Sampel)
+                   [indeks_acak[(jumlah_training + 1):jumlah_baris_unik]], ]
+
+# Membuat plot data training
+plot_train <- ggplot(data_training, aes(x = Strain, y = Stress, 
+                                        color = "Data Train",group=Sampel)) +
+  geom_line(size = 1) +
+  labs(x = "Strain(%)", y = "Stress(kPa)", title = "Plot Data Train dan Test") +
+  scale_color_manual(values = c("Data Train" = "dodgerblue"), name = "Data Type")
+
+# Menambahkan plot data testing ke dalam plot data training
+plot_combined <- plot_train +
+  geom_line(data = data_testing, aes(x = Strain, y = Stress, 
+                                     color = "Data Test",group=Sampel), size = 1) +
+  scale_color_manual(values = c("Data Train" = "dodgerblue", "Data Test" = "deeppink")) 
+
+# Menampilkan plot yang telah digabungkan
+print(plot_combined)
 
 #######MODELLING#########
 #Training Ordinary Least Square Model
@@ -55,7 +74,7 @@ ggplot(df_prediksi_ols) +
   geom_point(aes(x = Stress, y = Pred, 
                  color = as.character(Conf))) +
   geom_abline(intercept = 0, slope = 1, linetype = "solid", color = "black") +
-  xlim(0, 150) + ylim(0, 150) +
+  xlim(0, 255) + ylim(0, 255) +
   theme_bw() +
   coord_equal()
 
@@ -87,8 +106,8 @@ df_pred_rf<-data_testing %>% mutate(Predrf=pred_rf)
 ggplot(df_pred_rf) +
   geom_point(aes(x = Stress, y = Stress, 
                  color = as.character(Conf))) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
-  xlim(0, 100) + ylim(0, 100) +
+  geom_abline(intercept = 0, slope = 1, linetype = "solid", color = "black") +
+  xlim(0, 255) + ylim(0, 255) +
   theme_bw() +
   coord_equal()
 
