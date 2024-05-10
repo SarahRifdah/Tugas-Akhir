@@ -1,0 +1,185 @@
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(reshape2)
+
+# Plot kurva Stress-Strain Triaxial CU
+ggplot(RUN_R) +
+  geom_line(aes(x = Strain, y = Stress, color = Conf, group = Sampel)) +
+  labs(title = "Data Triaxial CU", x = "Strain (%)", y = "Stress (kPa)")
+
+# Cleaning data
+df_rf <- slice(RUN_R, -c(2030:2031)) # menghapus data di line 2030 dan 2031
+
+# Cek database terbaru
+ggplot(df_rf) +
+  geom_line(aes(x = Strain, y = Stress, color = Conf,group = Sampel)) +
+  labs(title = "Data Triaxial CU",x = "Strain (%)", y = "Stress (kPa)")
+
+# Distribusi dan persebaran data
+ggplot(df_rf %>% 
+         melt(id.vars = NULL),
+       aes(x = value)) +
+  geom_histogram(fill = "dodgerblue", color = "black") +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Histograms Distribusi Data")
+
+# Split data train dan test
+# Menghitung jumlah baris unik dalam dataframe
+jumlah_sampel_rf <- length(unique(df_rf$Sampel))
+
+# Menentukan jumlah data training yang diinginkan (70% dari total data)
+jumlah_training_rf <- round(0.7 * jumlah_sampel_rf)
+
+# Menetapkan seed untuk reproduktibilitas hasil acak
+set.seed(123)
+
+# Menghasilkan indeks acak untuk pemisahan data training dan testing
+indeks_rf <- sample(1:jumlah_sampel_rf)
+
+# Memisahkan data menjadi data training dan testing berdasarkan indeks acak
+training_rf <- df_rf[df_rf$Sampel %in% 
+                      unique(df_rf$Sampel)
+                    [indeks_rf[1:jumlah_training_rf]], ]
+testing_rf <- df_rf[df_rf$Sampel %in% 
+                     unique(df_rf$Sampel)
+                   [indeks_rf[(jumlah_training_rf + 1):jumlah_sampel_rf]], ]
+
+# Membuat plot data training
+train_plot <- ggplot(training_rf, aes(
+  x = Strain, 
+  y = Stress,
+  color = "Data Train", 
+  group = Sampel
+)) +
+  geom_line(size = 1) +
+  labs(
+    x = "Strain(%)", 
+    y = "Stress(kPa)",
+    title = "Plot Data Train dan Test") +
+  scale_color_manual(
+    values = c("Data Train" = "dodgerblue"), 
+    name = "Data Type")
+
+# Menambahkan plot data testing ke dalam plot data training
+plot_traintest <- train_plot +
+  geom_line(data = testing_rf, aes(
+    x = Strain, 
+    y = Stress,
+    color = "Data Test", 
+    group = Sampel), 
+    size = 1) +
+  scale_color_manual(
+    values = c("Data Train" = "dodgerblue", "Data Test" = "deeppink"))
+
+# Menampilkan plot yang telah digabungkan
+print(plot_traintest)
+
+# Training Random Forest model total stress strain
+library(ranger)
+model_rf <- ranger(
+  Stress ~ Strain + e0 + Gs + PL + LL + Cc + Sr + ϒm + Conf + PI,
+  training_rf,
+  num.trees = 500,
+  splitrule = "extratrees", 
+  importance = "impurity")
+model_rf
+
+# Prediction & testing RF model
+pred_rf <- predict(model_rf, data = testing_rf)$predictions
+
+#### Analisis Sensitivitas Model RF####
+
+# Buat data frame baru untuk plot berisi nilai error dan prediksi
+Prediksi_rf <- testing_rf %>%
+  mutate(Stress_rf = pred_rf,
+         Error = Stress - pred_rf) %>%
+  select(Sampel, Strain, Stress, Stress_rf, Error)
+
+# Cek nilai RMSE RF Model
+RMSE_RF <- sqrt(mean((testing_rf$Stress - pred_rf)^2))
+
+# Hitung selisih absolut antara nilai aktual dan nilai prediksi
+MAE_RF <- mean(abs(testing_rf$Stress - pred_rf))
+
+# Plot 1:1
+ggplot(Prediksi_rf, aes(x = Stress, y = Stress_rf)) +
+  geom_point() + # Menambahkan titik-titik
+  geom_abline(intercept = 0, 
+              slope = 1, 
+              color = "red", 
+              linetype = "dashed") + # Menambahkan garis 1:1
+  labs(x = "Stress (kPa)", y = "Prediksi Stress (kPa)") + 
+  ggtitle("Plot Predicted Stress vs Stress RF") + 
+  geom_text(
+    x = 20, 
+    y = 100,
+    label = paste("RMSE:", round(RMSE_RF, 2), "\n", "MAE:", round(MAE_RF, 2)),
+    hjust = 1, 
+    vjust = 0, 
+    color = "black", 
+    size = 4)
+
+# Plot strain vs predicted RF model
+ggplot(Prediksi_rf, aes(x = Strain, y = Stress, group = Sampel)) +
+  geom_point() + # Tambahkan titik data
+  geom_line(aes(y = Stress_rf), color = "blue") + # Tambahkan garis random forest
+  labs(
+    title = "Plot Hasil Random Forest",
+    x = "Strain (%)", 
+    y = "Stress (kPa)") +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = 11, 
+    y = c(0, 11),  # Mengatur posisi y untuk kedua teks
+    label = c(paste("RMSE:", round(RMSE_RF, 2)),
+              paste("MAE:", round(MAE_RF, 2))),
+    hjust = 1,
+    vjust = c(1, 0.9), 
+    color = "black")
+
+#### Cek variabel importance Random Forest####
+importance_gini <- ranger::importance(model_rf) # Metode Gini Impurity
+
+# Membuat data frame untuk variabel importance Gini impurity
+importance_gini_df <- data.frame(
+  Feature = names(importance_gini),
+  Importance_Gini = importance_gini)
+
+# Membuat bar plot
+ggplot(
+  importance_gini_df,
+  aes(x = reorder(Feature, Importance_Gini), y = Importance_Gini)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(
+    x = "Fitur", 
+    y = "Importance Gini Impurity",
+    title = "Variabel Importance Gini Impurity") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Model RF untuk feature importance permutation
+rf_permutation <- ranger(
+  Stress ~ Strain + e0 + Gs + PL + LL + Cc + Sr + ϒm + Conf + PI,
+  training_rf,
+  num.trees = 500,
+  splitrule = "extratrees", 
+  importance = "permutation")
+
+importance_permutation <- ranger::importance(rf_permutation) 
+
+# Membuat data frame untuk variabel importance Permutation
+importance_permu_df <- data.frame(
+  Feature = names(importance_permutation),
+  Importance_Permu = importance_permutation)
+
+# Membuat bar plot
+ggplot(
+  importance_permu_df,
+  aes(x = reorder(Feature, Importance_Permu), y = Importance_Permu)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  labs(
+    x = "Fitur", 
+    y = "Importance Permutation",
+    title = "Variabel Importance Permutation") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
