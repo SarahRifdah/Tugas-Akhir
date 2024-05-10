@@ -1,0 +1,191 @@
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Cleaning data
+data_awal <- slice(RUN_R, -c(2030:2031)) # menghapus data di line 2030 dan 2031
+
+# Membuat Subset Data Baru
+data <- data_awal %>%
+  group_by (Sampel) %>%
+  mutate (Strain_prev = lag(Strain, default = 0),         # Strain sebelumnya
+          Stress_prev = lag(Stress, default = 0),         # Stress sebelumnya
+          DelSt = Strain - lag(Strain, default = 0))      # Delta Strain
+
+# Plot data baru
+ggplot(data) +
+  geom_line(aes(x = Strain, y = Stress, color = Conf, group = Sampel)) +
+  labs(title = "Data Triaxial CU",x = "Strain (%)", y = "Stress (kPa)")
+
+# Distribusi dan persebaran data
+ggplot(data %>% 
+         melt(id.vars = NULL),
+       aes(x = value)) +
+  geom_histogram(fill = "dodgerblue", color = "black") +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Histograms Distribusi Data")
+
+# Splitting data training dan testing
+# Menghitung jumlah baris unik dalam dataframe
+sampel_ols_inc <- length(unique(data$Sampel))
+
+# Menentukan jumlah data training yang diinginkan (70% dari total data)
+sampel_train_inc <- round(0.7 * sampel_ols_inc)
+
+# Menetapkan seed untuk reproduktibilitas hasil acak
+set.seed(123)
+
+# Menghasilkan indeks acak untuk pemisahan data training dan testing
+indeks_inc <- sample(1:sampel_ols_inc)
+
+# Memisahkan data menjadi data training dan testing berdasarkan indeks acak
+train_ols_inc <- data[data$Sampel %in% 
+                           unique(data$Sampel)
+                         [indeks_inc[1:sampel_train_inc]], ]
+test_ols_inc <- data[data$Sampel %in% 
+                          unique(data$Sampel)
+                        [indeks_inc[(sampel_train_inc + 1):sampel_ols_inc]], ]
+
+# Membuat plot data training
+plot_ols_inc <- ggplot(train_ols_inc, aes(
+  x = Strain, 
+  y = Stress,
+  color = "Data Train", 
+  group = Sampel)) +
+  geom_line(size = 1) +
+  labs(
+    x = "Strain(%)", 
+    y = "Stress(kPa)",
+    title = "Plot Data Train dan Test") +
+  scale_color_manual(
+    values = c("Data Train" = "dodgerblue"), 
+    name = "Data Type")
+
+# Menambahkan plot data testing ke dalam plot data training
+combined_ols_inc <- plot_ols_inc +
+  geom_line(data = test_ols_inc, aes(
+    x = Strain, 
+    y = Stress,
+    color = "Data Test", 
+    group = Sampel), 
+    size = 1) +
+  scale_color_manual(
+    values = c("Data Train" = "dodgerblue", "Data Test" = "deeppink"))
+
+# Menampilkan plot yang telah digabungkan
+print(combined_ols_inc)
+
+######## Modelling Ordrinary Least Square Model #########
+
+# Training Ordinary Least Square Model Incremental
+ols_Inc <- lm(Stress ~ Strain + Conf + e0 + Gs + PL + LL + Cc + Sr + PI + ϒm + 
+                Stress_prev + Strain_prev + DelSt, 
+              train_ols_inc)
+
+# Hasil training pemodelan OLS
+summary(ols_Inc)
+
+###### Testing & Menentukan Predicted Stress OLS Increment Model #######
+
+# Inisialisasi kolom stress prediksi
+test_ols_inc$Stress_ols <- NA
+
+# Melakukan prediksi nilai stress untuk setiap langkah
+for (i in 1:nrow(test_ols_inc)) {
+  if (test_ols_inc$Strain[i] == 0) {
+    # Untuk langkah pertama, prediksi berdasarkan nilai strain = 0
+    Stress_ols <- predict(ols_Inc, newdata = test_ols_inc[i, ])
+  } else {
+    # Prediksi berdasarkan nilai strain dan prediksi stress sebelumnya
+    Stress_ols <- predict(ols_Inc, newdata = data.frame (
+      Stress_prev = test_ols_inc$Stress_ols[i-1],
+      test_ols_inc[i, !(names(test_ols_inc) %in% "Stress_prev")]))
+  }
+
+  test_ols_inc$Stress_ols[i] <- Stress_ols
+}
+
+# Cek nilai RMSE OLS Model
+RMSE_ols_Inc <- sqrt(mean(with(test_ols_inc, (Stress - Stress_ols)^2)))
+
+# Cek nilai MAE OLS Model
+MAE_ols_Inc <- mean(abs(with(test_ols_inc, (Stress-Stress_ols))))
+
+# Dataset berisi strain, stress, stress prediksi, dan error
+data_ols <- test_ols_inc %>%
+  mutate(Error = Stress - Stress_ols) %>%
+  select(Sampel, Strain, Stress, Stress_ols, Error)
+
+# Plot 1:1
+ggplot(data_ols, aes(x = Stress, y = Stress_ols)) +
+  geom_point() + # Menambahkan titik-titik
+  geom_abline(
+    intercept = 0, 
+    slope = 1, 
+    color = "red", 
+    linetype = "dashed") + # Menambahkan garis 1:1
+  labs(x = "Stress (kPa)", y = "Predicted Stress (kPa)") + 
+  ggtitle("Plot Predicted Stress vs Stress OLS Increment") +
+  geom_text(
+    x = 20, 
+    y = 130,
+    label = paste("RMSE:", round(RMSE_ols_Inc, 2), "\n", 
+                  "MAE:", round(MAE_ols_Inc, 2)),
+    hjust = 1, 
+    vjust = 0, 
+    color = "black", 
+    size = 4)
+
+# Plot strain vs predicted OLS model
+ggplot(data_ols, aes(x = Strain, y = Stress, group = Sampel)) +
+  geom_point() + # Tambahkan titik data
+  geom_line(aes(y = Stress_ols), color = "blue") + # Tambahkan garis regresi
+  labs(
+    title = "Plot Hasil Regresi Linear Increment", 
+    x = "Strain (%)", 
+    y = "Stress (kPa)") +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = 11, 
+    y = c(0, 11),  # Mengatur posisi y untuk kedua teks
+    label = c(paste("RMSE:", round(RMSE_ols_Inc, 2)),
+              paste("MAE:", round(MAE_ols_Inc, 2))),
+    hjust = 1,
+    vjust = c(1, 0.9), 
+    color = "black")
+
+###### Pemodelan Kurva Stress Strain ########
+
+# Membuat dataset baru
+dataset_ols <- data.frame(
+  Strain = seq(0, 10, by = 0.5), # Nilai strain 0-10% interval 0,5
+  Conf = mean(data$Conf),        # Parameter tanah rata-rata seluruh sampel
+  e0 = mean(data$e0),
+  Stress = 0,
+  Gs = mean(data$Gs),
+  PL = mean(data$PL),
+  LL = mean(data$LL),
+  PI = mean(data$PI),
+  Cc = mean(data$Cc),
+  Sr = mean(data$Sr),
+  ϒm = mean(data$ϒm),
+  DelSt = 0.5)
+
+# Prediksi nilai stress dengan for loop algoritma OLS
+for (i in 2:nrow(dataset_ols)) { # Dimulai dari baris ke 2
+  dataset_ols <- dataset_ols %>%
+    mutate(
+      Strain_prev = lag(Strain, default = 0),                 
+      Stress_prev = lag(Stress, default = 0))                  
+  Stress <- predict(ols_Inc, newdata = dataset_ols[i, ])
+  
+  dataset_ols$Stress[i] <- Stress
+}
+# Plot hasil prediksi stress vs strain
+ggplot(dataset_ols) +
+  geom_line(aes(x = Strain, y = Stress)) +
+  labs(
+    title = "Data Triaxial CU Model OLS Increment",
+    x = "Strain (%)", y = "Stress (kPa)")
+warnings()
