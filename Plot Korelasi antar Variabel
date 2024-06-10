@@ -1,0 +1,106 @@
+# TUNED RANDOM FOREST CLASSIFICATION MODEL #####################
+
+library(ranger)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Cleaning data
+data_awal <- slice(RUN_R, -c(2019:2020)) # menghapus data di line 2030 dan 2031
+
+# Splitting data training dan testing
+# Menghitung jumlah baris unik dalam dataframe
+sampel_rf <- length(unique(data_awal$Sampel))
+
+# Menentukan jumlah data training yang diinginkan (70% dari total data)
+sampel_train <- round(0.7 * sampel_rf)
+
+# Menetapkan seed untuk reproduktibilitas hasil acak
+set.seed(123)
+
+# Menghasilkan indeks acak untuk pemisahan data training dan testing
+indeks <- sample(1:sampel_rf)
+
+# Memisahkan data menjadi data training dan testing berdasarkan indeks acak
+training_df <- data_awal[data_awal$Sampel %in% 
+                          unique(data_awal$Sampel)
+                        [indeks[1:sampel_train]], ]
+testing_df <- data_awal[data_awal$Sampel %in% 
+                         unique(data_awal$Sampel)
+                       [indeks[(sampel_train + 1):sampel_rf]], ]
+
+model_rf <- ranger(Stress ~ Strain + Conf + e0 + Gs + PL + LL + w + Sr + PI + ϒm,
+                   training_df,
+                   num.trees = 500,
+                   splitrule = "extratrees", 
+                   importance = "impurity")
+model_rf
+
+# train control
+ctrl <- trainControl(method = "cv",
+                     number = 5,
+                     verboseIter = FALSE,
+                     search = 'grid')
+
+# Create a grid of hyperparameters to search over
+param_grid <- expand.grid(
+  mtry = seq(1, 5, 1),
+  splitrule = c("extratrees"),
+  min.node.size = c(1, 3, 5, 10, 20)
+)
+
+# Perform 5-fold cross-validation to tune hyperparameters
+set.seed(123)
+
+# initialize list
+cv_results_list <- NULL
+
+for (numtrees in c(1, 5, 10, 50, seq(100, 500, 100))) {
+  print(system.time(
+    # training
+    random_forest <- train(Stress ~ Strain + Conf + e0 + Gs + PL + LL + 
+                        Sr + PI + ϒm + w,
+                      data= training_df,
+                      method = 'ranger',
+                      trControl = ctrl,
+                      tuneGrid = param_grid,
+                      num.trees = numtrees,
+                      verbose = FALSE)
+  ))
+  
+  # save results in a data frame
+  cv_results <- data.frame(random_forest$results, 
+                           ntrees = rep(numtrees, 
+                                        each = nrow(random_forest$results)))
+  
+  # append
+  cv_results_list <- rbind(cv_results_list, cv_results)
+  
+  # computation progress
+  print(paste("numtrees = ", numtrees, "done"))
+  
+}
+
+pred_rf <- predict(random_forest, newdata = testing_df)
+
+# Evaluasi model
+rmse <- RMSE(pred_rf, testing_df$Stress)
+r_squared <- R2(pred_rf, testing_df$Stress)
+
+cat("RMSE:", rmse, "\n")
+cat("R-squared:", r_squared, "\n")
+
+ggplot(data = cv_results_list %>% filter(min.node.size == 10),
+       aes(x = ntrees, y = Rsquared, group = mtry)) +
+  geom_line(aes(color = factor(mtry))) +
+  geom_point(aes(color = factor(mtry))) +
+  labs(x = "Ntrees", y = "OOB Regression accuracy") +
+  theme_bw()
+
+ggplot(data = cv_results_list %>% filter(ntrees == 500),
+       aes(x = min.node.size, y = Rsquared, group = mtry)) +
+  geom_line(aes(color = factor(mtry))) +
+  geom_point(aes(color = factor(mtry))) +
+  labs(x = "Min Node Size", y = "OOB Regression accuracy") +
+  theme_bw()
