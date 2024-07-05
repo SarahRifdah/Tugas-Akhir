@@ -1,0 +1,153 @@
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Cleaning data
+data_awal <- slice(RUN_R, -c(2019:2020)) # menghapus data di line 2019 dan 2020
+
+# Membuat Subset Data Baru
+dataset <- data_awal %>%
+  group_by (Sampel) %>%
+  mutate (Strain_prev = lag(Strain, default = 0),         # Strain sebelumnya
+          Stress_prev = lag(Stress, default = 0),         # Stress sebelumnya
+          DelSt = Strain - lag(Strain, default = 0))      # Delta Strain
+
+# Splitting data training dan testing
+# Menghitung jumlah baris unik dalam dataframe
+sampel_ols <- length(unique(dataset$Sampel))
+
+# Menentukan jumlah data training yang diinginkan (70% dari total data)
+sampel_training <- round(0.7 * sampel_ols)
+
+# Menetapkan seed untuk reproduktibilitas hasil acak
+set.seed(123)
+
+# Menghasilkan indeks acak untuk pemisahan data training dan testing
+indeks_acak <- sample(1:sampel_ols)
+
+# Memisahkan data menjadi data training dan testing berdasarkan indeks acak
+training_ols <- dataset[dataset$Sampel %in% 
+                        unique(dataset$Sampel)
+                      [indeks_acak[1:sampel_training]], ]
+testing_ols <- dataset[dataset$Sampel %in% 
+                       unique(dataset$Sampel)
+                     [indeks_acak[(sampel_training + 1):sampel_ols]], ]
+
+######## Modelling Ordrinary Least Square Model #########
+
+# Training Ordinary Least Square Model Incremental
+ols_model <- lm(Stress ~ Strain + Conf + e0 + Gs + PL + LL + w + Sr + PI + ϒm + 
+                Stress_prev + Strain_prev + DelSt, 
+              training_ols)
+
+# Hasil training pemodelan OLS
+summary(ols_model)
+
+###### Testing & Menentukan Predicted Stress OLS Increment Model #######
+
+# Inisialisasi kolom stress prediksi
+testing_ols$Stress_ols <- NA
+
+# Melakukan prediksi nilai stress untuk setiap langkah
+for (i in 1:nrow(testing_ols)) {
+  if (testing_ols$Strain[i] == 0) {
+    # Untuk langkah pertama, prediksi berdasarkan nilai strain = 0
+    Stress_ols <- predict(ols_model, newdata = testing_ols[i, ])
+  } else {
+    # Prediksi berdasarkan nilai strain dan prediksi stress sebelumnya
+    Stress_ols <- predict(ols_model, newdata = data.frame (
+      Stress_prev = testing_ols$Stress_ols[i-1],
+      testing_ols[i, !(names(testing_ols) %in% "Stress_prev")]))
+  }
+  
+  testing_ols$Stress_ols[i] <- Stress_ols
+}
+
+# Cek nilai RMSE OLS Model
+ols_RMSE <- sqrt(mean(with(testing_ols, (Stress - Stress_ols)^2)))
+
+# Cek nilai MAE OLS Model
+ols_MAE <- mean(abs(with(testing_ols, (Stress-Stress_ols))))
+
+# Dataset berisi strain, stress, stress prediksi, dan error
+summary_ols <- testing_ols %>%
+  mutate(Error = Stress - Stress_ols) %>%
+  select(Sampel, Strain, Stress, Stress_ols, Error)
+
+# Plot 1:1
+ggplot(summary_ols, aes(x = Stress, y = Stress_ols)) +
+  geom_point() + # Menambahkan titik-titik
+  geom_abline(
+    intercept = 0, 
+    slope = 1, 
+    color = "red", 
+    linetype = "dashed") + # Menambahkan garis 1:1
+  labs(x = "Stress (kPa)", y = "Predicted Stress (kPa)") + 
+  ggtitle("Plot Predicted Stress vs Stress OLS Increment") +
+  geom_text(
+    x = 20, 
+    y = 130,
+    label = paste("RMSE:", round(ols_RMSE, 2), "\n", 
+                  "MAE:", round(ols_MAE, 2)),
+    hjust = 1, 
+    vjust = 0, 
+    color = "black", 
+    size = 4)
+
+# Plot strain vs predicted OLS model
+ggplot(summary_ols, aes(x = Strain, y = Stress, group = Sampel)) +
+  geom_point() + # Tambahkan titik data
+  geom_line(aes(y = Stress_ols), color = "blue") + # Tambahkan garis regresi
+  labs(
+    title = "Plot Hasil Regresi Linear Increment", 
+    x = "Strain (%)", 
+    y = "Stress (kPa)") +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = 11, 
+    y = c(0, 11),  # Mengatur posisi y untuk kedua teks
+    label = c(paste("RMSE:", round(ols_RMSE, 2)),
+              paste("MAE:", round(ols_MAE, 2))),
+    hjust = 1,
+    vjust = c(1, 0.9), 
+    color = "black")
+
+###### Pemodelan Kurva Stress Strain ########
+
+# Membuat dataset baru
+dataset_baru <- data.frame(
+  Strain = seq(0, 10.5, by = 0.308), # Nilai strain 0-10% interval 0,5
+  Conf = 166.712,        # Parameter tanah rata-rata seluruh sampel
+  e0 = 1.71,
+  Stress = 0,
+  Gs = 2.69,
+  PL = 29,
+  LL = 75,
+  PI = 46,
+  w  = 54,
+  Sr = 96,
+  ϒm = 16.5,
+  DelSt = 0.308)
+
+# Prediksi nilai stress dengan for loop algoritma OLS
+for (i in 2:nrow(dataset_baru)) { # Dimulai dari baris ke 2
+  dataset_baru <- dataset_baru %>%
+    mutate(
+      Strain_prev = lag(Strain, default = 0),                 
+      Stress_prev = lag(Stress, default = 0))                  
+  Stress <- predict(ols_model, newdata = dataset_baru[i, ])
+  
+  dataset_baru$Stress[i] <- Stress
+}
+
+# Plot hasil prediksi stress vs strain
+filter_ols <- filter(testing_ols, Sampel == 68)
+ggplot(filter_ols, aes(x = Strain, y = Stress)) +
+  geom_point() + # Tambahkan titik data
+  geom_line(aes(y = dataset_baru$Stress), color = "blue") + # Tambahkan garis regresi
+  labs(
+    title = "Plot Hasil Regresi Linear Increment", 
+    x = "Strain (%)", 
+    y = "Stress (kPa)") +
+  theme_minimal() 
