@@ -1,9 +1,12 @@
+####### Incremental model###########
+
 library(dplyr)
 library(ggplot2)
 library(tidyr)
+library(reshape2)
 
 # Cleaning data
-data_awal <- slice(RUN_R, -c(2030:2031)) # menghapus data di line 2030 dan 2031
+data_awal <- slice(RUN_R, -c(2019:2020)) # menghapus data di line 2019 dan 2020
 
 # Membuat Subset Data Baru
 data_inc <- data_awal %>%
@@ -77,8 +80,8 @@ print(plot_kombinasi)
 
 # Training Random Forest model increment stress strain
 library(ranger)
-rf_inc <- ranger(Stress ~ Strain + Conf + e0 + Gs + PL + LL + Cc + 
-                   Sr + PI + ϒm + Cc + Strain_prev + Stress_prev + DelSt,
+rf_inc <- ranger(Stress ~ Strain + Conf + e0 + Gs + Sr + PI + w +
+                   LL + ϒm + PL + Strain_prev + Stress_prev + DelSt,
                  train_rf_inc,
                  num.trees = 500,
                  splitrule = "extratrees", 
@@ -172,8 +175,8 @@ ggplot(
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 # Model RF untuk feature importance permutation
-permutation_Inc <- ranger( Stress ~ Strain + Conf + e0 + Gs + PL + LL + Cc + Sr + 
-                             PI + ϒm + Cc + Strain_prev + Stress_prev + DelSt,
+permutation_Inc <- ranger(Stress ~ Strain + Conf + e0 + Gs + PL + LL + Sr + 
+                             PI + ϒm + w + Strain_prev + Stress_prev + DelSt,
                            train_rf_inc,
                            num.trees = 500,
                            splitrule = "extratrees", 
@@ -208,7 +211,7 @@ dataset_rf <- data.frame(
   PL = mean(data_inc$PL),
   LL = mean(data_inc$LL),
   PI = mean(data_inc$PI),
-  Cc = mean(data_inc$Cc),
+  w  = mean(data_inc$w),
   Sr = mean(data_inc$Sr),
   ϒm = mean(data_inc$ϒm),
   DelSt = 0.5)
