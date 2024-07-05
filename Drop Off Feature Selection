@@ -1,0 +1,97 @@
+library(caret)
+library(ranger)
+library(dplyr)
+library(caret)
+
+# Cleaning data
+df_rf <- slice(RUN_R, -c(2019:2020)) # menghapus data di line 2019 dan 2020
+
+# Membuat Subset Data Baru
+data_inc <- data_awal %>%
+  group_by (Sampel) %>%
+  mutate (Strain_prev = lag(Strain, default = 0),     # Strain sebelumnya
+          Stress_prev = lag(Stress, default = 0),     # Stress sebelumnya
+          DelSt = Strain - lag(Strain, default = 0))  # Delta Strain
+
+# Split data train dan test
+# Menghitung jumlah baris unik dalam dataframe
+jumlah_sampel_rf <- length(unique(df_rf$Sampel))
+
+# Menentukan jumlah data training yang diinginkan (70% dari total data)
+jumlah_training_rf <- round(0.7 * jumlah_sampel_rf)
+
+# Menetapkan seed untuk reproduktibilitas hasil acak
+set.seed(123)
+
+# Menghasilkan indeks acak untuk pemisahan data training dan testing
+indeks_rf <- sample(1:jumlah_sampel_rf)
+
+# Memisahkan data menjadi data training dan testing berdasarkan indeks acak
+training_rf <- df_rf[df_rf$Sampel %in% 
+                       unique(df_rf$Sampel)
+                     [indeks_rf[1:jumlah_training_rf]], ]
+testing_rf <- df_rf[df_rf$Sampel %in% 
+                      unique(df_rf$Sampel)
+                    [indeks_rf[(jumlah_training_rf + 1):jumlah_sampel_rf]], ]
+
+# Define the control function for cross-validation
+ctrl <- trainControl(method = "cv",
+                     number = 5,  # 5-fold cross-validation
+                     verboseIter = FALSE,
+                     savePredictions = 'final')
+
+# Build the initial model using all features
+set.seed(123)
+initial_model <- train(
+  Stress ~ Strain + Conf + e0 + Gs + PL + LL + w + Sr + PI + ϒm,
+  data = training_rf,
+  method = 'ranger',
+  trControl = ctrl,
+  tuneLength = 10,
+  importance = 'impurity')
+
+# Get initial RMSE
+initial_rmse <- initial_model$results$RMSE[which.min(initial_model$results$RMSE)]
+initial_rmse
+
+# List of features
+features <- c("Strain", "Conf", "e0", "Gs", "PL", "LL", "w", "Sr", "PI", "ϒm", "Fines")
+
+# Initialize a data frame to store results
+feature_importance <- data.frame(
+  Feature = character(), 
+  RMSE = numeric(), 
+  stringsAsFactors = FALSE)
+
+# Drop-off analysis
+for (feature in features) {
+  # Create formula without the current feature
+  formula <- as.formula(paste(
+    "Stress ~", 
+    paste(setdiff(features, feature),collapse = " + ")))
+  
+  # Train the model without the current feature
+  set.seed(123)
+  model <- train(formula,
+                 data = training_rf,
+                 method = 'ranger',
+                 trControl = ctrl,
+                 tuneLength = 10,
+                 importance = 'impurity')
+  
+  # Get RMSE
+  rmse <- model$results$RMSE[which.min(model$results$RMSE)]
+  
+  # Append to results
+  feature_importance <- rbind(
+    feature_importance, 
+    data.frame(Feature = feature, RMSE = rmse))
+}
+
+# Calculate RMSE difference from the initial model
+feature_importance <- feature_importance %>%
+  mutate(RMSE_Diff = RMSE - initial_rmse) %>%
+  arrange(desc(RMSE_Diff))
+
+# Print feature importance
+print(feature_importance)
