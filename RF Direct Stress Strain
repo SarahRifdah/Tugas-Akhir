@@ -9,7 +9,7 @@ ggplot(RUN_R) +
   labs(title = "Data Triaxial CU", x = "Strain (%)", y = "Stress (kPa)")
 
 # Cleaning data
-df_rf <- slice(RUN_R, -c(2030:2031)) # menghapus data di line 2030 dan 2031
+df_rf <- RUN_R %>% slice(-c(2019:2020))
 
 # Cek database terbaru
 ggplot(df_rf) +
@@ -75,10 +75,10 @@ plot_traintest <- train_plot +
 # Menampilkan plot yang telah digabungkan
 print(plot_traintest)
 
-# Training Random Forest model total stress strain
+# Training Random Forest model direct stress strain
 library(ranger)
 model_rf <- ranger(
-  Stress ~ Strain + e0 + Gs + PL + LL + Cc + Sr + ϒm + Conf + PI,
+  Stress ~ Strain + Gs + e0 + PL + LL + Sr + ϒm + Conf + PI + w,
   training_rf,
   num.trees = 500,
   splitrule = "extratrees", 
@@ -160,7 +160,7 @@ ggplot(
 
 # Model RF untuk feature importance permutation
 rf_permutation <- ranger(
-  Stress ~ Strain + e0 + Gs + PL + LL + Cc + Sr + ϒm + Conf + PI,
+  Stress ~ Strain + e0 + Gs + PL + LL + w + Sr + ϒm + Conf + PI,
   training_rf,
   num.trees = 500,
   splitrule = "extratrees", 
