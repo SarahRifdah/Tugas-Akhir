@@ -1,0 +1,155 @@
+####### Incremental model###########
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Cleaning data
+data_awal <- slice(RUN_R, -c(2019:2020)) # menghapus data di line 2019 dan 2020
+
+# Membuat Subset Data Baru
+data_inc <- data_awal %>%
+  group_by (Sampel) %>%
+  mutate (Strain_prev = lag(Strain, default = 0),     # Strain sebelumnya
+          Stress_prev = lag(Stress, default = 0),     # Stress sebelumnya
+          DelSt = Strain - lag(Strain, default = 0))  # Delta Strain
+
+# Splitting data training dan testing
+# Menghitung jumlah baris unik dalam dataframe
+sampel_rf <- length(unique(data_inc$Sampel))
+
+# Menentukan jumlah data training yang diinginkan (70% dari total data)
+sampel_train <- round(0.7 * sampel_rf)
+
+# Menetapkan seed untuk reproduktibilitas hasil acak
+set.seed(123)
+
+# Menghasilkan indeks acak untuk pemisahan data training dan testing
+indeks <- sample(1:sampel_rf)
+
+# Memisahkan data menjadi data training dan testing berdasarkan indeks acak
+training_df <- data_inc[data_inc$Sampel %in% 
+                          unique(data_inc$Sampel)
+                        [indeks[1:sampel_train]], ]
+testing_df <- data_inc[data_inc$Sampel %in% 
+                          unique(data_inc$Sampel)
+                        [indeks[(sampel_train + 1):sampel_rf]], ]
+
+# Training Random Forest model increment stress strain
+library(ranger)
+model_rf <- ranger(Stress ~ Strain + Conf + e0 + LL + PI + PL + w + Gs +
+                   Sr + ϒm + Strain_prev + Stress_prev + DelSt,
+                 training_df,
+                 num.trees = 200,
+                 mtry = 10,
+                 min.node.size = 1,
+                 splitrule = "extratrees", 
+                 importance = "impurity")
+model_rf
+
+# Inisialisasi kolom prediksi stress
+testing_df$Stress_rf <- 0
+
+# Melakukan prediksi untuk setiap langkah
+for (i in 1:nrow(testing_df)) {
+  if (testing_df$Strain[i] == 0) {
+    # Untuk langkah pertama, prediksi berdasarkan nilai strain = 0
+    Stress_rf <- predict(model_rf, data = testing_df[i, ])
+  } else {
+    # Prediksi stress berdasarkan nilai strain dan prediksi stress sebelumnya
+    Stress_rf <- predict(model_rf, data = data.frame (
+      Stress_prev = testing_df$Stress_rf[i - 1],
+      testing_df[i, !(names(testing_df) %in% "Stress_prev")]))
+  }
+  
+  testing_df$Stress_rf[i] <- Stress_rf$predictions
+}
+
+# Cek nilai RMSE RF Model
+RMSE_model <- sqrt(mean(with(testing_df, (Stress - Stress_rf)^2)))
+
+# Cek nilai MAE OLS Model
+MAE_model <- mean(abs(with(testing_df, (Stress-Stress_rf))))
+
+# Dataset berisi strain, stress, stress prediksi, dan error
+summary_df <- testing_df %>%
+  mutate(Error = Stress - Stress_rf) %>%
+  select(Sampel, Strain, Stress, Stress_rf, Error)
+
+# Buat 1:1
+ggplot(summary_df, aes(x = Stress, y = Stress_rf)) +
+  geom_point() + # Menambahkan titik-titik
+  geom_abline(
+    intercept = 0, 
+    slope = 1, 
+    color = "red", 
+    linetype = "dashed") + # Menambahkan garis 1:1
+  labs(x = "Stress (kPa)", y = "Predicted Stress (kPa)") + 
+  ggtitle("Plot Predicted Stress vs Stress RF Increment") +
+  geom_text(
+    x = 20, 
+    y = 110,
+    label = paste("RMSE:", round(RMSE_model, 2), "\n", 
+                  "MAE:", round(MAE_model, 2)),
+    hjust = 1, 
+    vjust = 0, 
+    color = "black", 
+    size = 4)
+
+# Plot strain vs predicted RF model
+ggplot(summary_df, aes(x = Strain, y = Stress, group = Sampel)) +
+  geom_point() + # Tambahkan titik data
+  geom_line(aes(y = Stress_rf), color = "blue") + # Tambahkan garis regresi
+  labs(
+    title = "Plot Hasil Random Forest Increment", 
+    x = "Strain (%)", 
+    y = "Stress (kPa)") +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = 11, 
+    y = c(0, 11),  # Mengatur posisi y untuk kedua teks
+    label = c(paste("RMSE:", round(RMSE_model, 2)),
+              paste("MAE:", round(MAE_model, 2))),
+    hjust = 1,
+    vjust = c(1, 0.9), 
+    color = "black")
+
+###### Pemodelan Kurva Stress Strain ########
+
+# Membuat dataset baru
+trial_df <- data.frame(
+  Strain = seq(0, 10.5, by = 0.33), # Nilai strain 0-10% interval 0,5
+  Conf = 156.9056,        # Parameter tanah rata-rata seluruh sampel
+  e0 = 5.05,
+  Stress = 0,
+  Gs = 2.24,
+  PL = 41,
+  LL = 235,
+  PI = 194,
+  w  = 201,
+  Sr = 92,
+  ϒm = 11.4,
+  DelSt = 0.33)
+
+# Prediksi nilai stress dengan for loop algoritma RF
+for (i in 2:nrow(trial_df)) { # Dimulai dari baris ke 2
+  trial_df <- trial_df %>%
+    mutate(
+      Strain_prev = lag(Strain, default = 0),                
+      Stress_prev = lag(Stress, default = 0)) 
+  Stress <- predict(model_rf, data = trial_df [i, ])
+  
+  trial_df$Stress[i] <- Stress$predictions
+}
+
+# Plot hasil prediksi stress vs strain
+filter_rf <- filter(testing_df, Sampel == 1)
+ggplot(filter_rf, aes(x = Strain, y = Stress)) +
+  geom_point() + # Tambahkan titik data
+  geom_line(aes(y = trial_df$Stress), color = "blue") +
+  labs(
+    title = "Plot Hasil Random Forest Increment", 
+    x = "Strain (%)", 
+    y = "Stress (kPa)") +
+  theme_minimal() 
