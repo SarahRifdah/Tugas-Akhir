@@ -1,0 +1,126 @@
+# TUNED RANDOM FOREST CLASSIFICATION MODEL #####################
+
+library(ranger)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Cleaning data
+data_awal <- slice(RUN_R, -c(2019:2020)) # menghapus data di line 2019 dan 2020
+
+# Membuat Subset Data Baru
+data_inc <- data_awal %>%
+  group_by (Sampel) %>%
+  mutate (Strain_prev = lag(Strain, default = 0),     # Strain sebelumnya
+          Stress_prev = lag(Stress, default = 0),     # Stress sebelumnya
+          DelSt = Strain - lag(Strain, default = 0))  # Delta Strain
+
+# Splitting data training dan testing
+# Menghitung jumlah baris unik dalam dataframe
+jenis_sampel_inc <- length(unique(data_inc$Sampel))
+
+# Menentukan jumlah data training yang diinginkan (70% dari total data)
+training_inc_rf <- round(0.7 * jenis_sampel_inc)
+
+# Menetapkan seed untuk reproduktibilitas hasil acak
+set.seed(123)
+
+# Menghasilkan indeks acak untuk pemisahan data training dan testing
+indeks_Inc <- sample(1:jenis_sampel_inc)
+
+# Memisahkan data menjadi data training dan testing berdasarkan indeks acak
+train_rf_inc<- data_inc[data_inc$Sampel %in% 
+                          unique(data_inc$Sampel)
+                        [indeks_Inc[1:training_inc_rf]], ]
+test_rf_inc <- data_inc[data_inc$Sampel %in% 
+                          unique(data_inc$Sampel)
+                        [indeks_Inc[(training_inc_rf + 1):jenis_sampel_inc]], ]
+
+# Training Random Forest model increment stress strain
+library(ranger)
+rf_inc <- ranger(Stress ~ Strain + Conf + e0 + Gs + PL + LL +
+                   Sr + PI + ϒm + w + Strain_prev + Stress_prev + DelSt,
+                 train_rf_inc,
+                 num.trees = 500,
+                 splitrule = "extratrees", 
+                 importance = "impurity")
+rf_inc
+
+# train control
+ctrl_inc <- trainControl(method = "cv",
+                     number = 5,
+                     verboseIter = FALSE,
+                     search = 'grid')
+
+# Create a grid of hyperparameters to search over
+param_grid_inc <- expand.grid(
+  mtry = c(seq(1, 5, 1), 7, 9, 10, 11, 13),
+  splitrule = c("extratrees", "variance"),
+  min.node.size = c(1, 3, 5, 10, 20)
+)
+
+# Perform 5-fold cross-validation to tune hyperparameters
+set.seed(123)
+
+# initialize list
+cv_results_inc <- NULL
+
+for (numtrees in c(1, 5, 10, 50, 100, 200)) {
+  print(system.time(
+    # training
+    random_forest_inc <- train(Stress ~ Strain + Conf + e0 + Gs + PL + LL + Fines +
+                             Sr + PI + ϒm + w + Strain_prev + Stress_prev + DelSt,
+                           data= train_rf_inc,
+                           method = 'ranger',
+                           trControl = ctrl_inc,
+                           tuneGrid = param_grid_inc,
+                           num.trees = numtrees,
+                           verbose = FALSE)
+  ))
+  
+  # save results in a data frame
+  cv_result_inc <- data.frame(random_forest_inc$results, 
+                           ntrees = rep(numtrees, 
+                                        each = nrow(random_forest_inc$results)))
+  
+  # append
+  cv_results_inc <- rbind(cv_results_inc, cv_result_inc)
+  
+  # computation progress
+  print(paste("numtrees = ", numtrees, "done"))
+  
+}
+
+###Plot hasil hyperparameter tuning####
+ggplot(data = cv_results_inc %>% filter(min.node.size == 1, splitrule == "extratrees"),
+       aes(x = ntrees, y = Rsquared, group = mtry)) +
+  geom_line(aes(color = factor(mtry))) +
+  geom_point(aes(color = factor(mtry))) +
+  labs(x = "Ntrees", y = "OOB Regression accuracy") +
+  theme_bw()
+
+ggplot(data = cv_results_inc %>% filter(min.node.size == 1, splitrule == "variance"),
+       aes(x = ntrees, y = Rsquared, group = mtry)) +
+  geom_line(aes(color = factor(mtry))) +
+  geom_point(aes(color = factor(mtry))) +
+  labs(x = "Ntrees", y = "OOB Regression accuracy") +
+  theme_bw()
+
+ggplot(data = cv_results_inc %>% filter(ntrees == 200, splitrule == "extratrees"),
+       aes(x = min.node.size, y = Rsquared, group = mtry)) +
+  geom_line(aes(color = factor(mtry))) +
+  geom_point(aes(color = factor(mtry))) +
+  labs(x = "Min Node Size", y = "OOB Regression accuracy") +
+  theme_bw()
+
+ggplot(data = cv_results_inc %>% filter(ntrees == 200, splitrule == "variance"),
+       aes(x = min.node.size, y = Rsquared, group = mtry)) +
+  geom_line(aes(color = factor(mtry))) +
+  geom_point(aes(color = factor(mtry))) +
+  labs(x = "Min Node Size", y = "OOB Regression accuracy") +
+  theme_bw()
+
+# Find the best hyperparameters based on RMSE
+best_hyperparameters <- cv_results_inc[which.min(cv_results_inc$RMSE), ]
+print(best_hyperparameters)
