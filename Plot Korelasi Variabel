@@ -1,0 +1,27 @@
+install.packages("ggplot2")
+install.packages("GGally")
+library(ggplot2)
+library(GGally)
+library(dplyr)
+
+# Cleaning data
+data_awal <- slice(RUN_R, -c(2019:2020)) # menghapus data di line 2019 dan 2020
+
+ggpairs(data_awal)
+
+# Menghitung matriks korelasi
+corr_matrix <- cor(data_awal)
+
+# Mengubah matriks korelasi menjadi dataframe
+corr_df <- as.data.frame(as.table(corr_matrix))
+
+# Membuat plot korelasi
+ggplot(corr_df, aes(Var1, Var2, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Pearson\nCorrelation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                   size = 12, hjust = 1)) +
+  coord_fixed()
