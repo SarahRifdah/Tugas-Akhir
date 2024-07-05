@@ -3,7 +3,7 @@ library(ggplot2)
 library(tidyr)
 
 # Cleaning data
-data_awal <- slice(RUN_R, -c(2030:2031)) # menghapus data di line 2030 dan 2031
+data_awal <- slice(RUN_R, -c(2019:2020)) # menghapus data di line 2019 dan 2020
 
 # Membuat Subset Data Baru
 data <- data_awal %>%
@@ -78,7 +78,7 @@ print(combined_ols_inc)
 ######## Modelling Ordrinary Least Square Model #########
 
 # Training Ordinary Least Square Model Incremental
-ols_Inc <- lm(Stress ~ Strain + Conf + e0 + Gs + PL + LL + Cc + Sr + PI + ϒm + 
+ols_Inc <- lm(Stress ~ Strain + Conf + e0 + Gs + PL + LL + w + Sr + PI + ϒm + 
                 Stress_prev + Strain_prev + DelSt, 
               train_ols_inc)
 
@@ -137,7 +137,7 @@ ggplot(data_ols, aes(x = Stress, y = Stress_ols)) +
     size = 4)
 
 # Plot strain vs predicted OLS model
-ggplot(data_ols, aes(x = Strain, y = Stress, group = Sampel)) +
+ggplot(test_ols_inc, aes(x = Strain, y = Stress, group = Sampel)) +
   geom_point() + # Tambahkan titik data
   geom_line(aes(y = Stress_ols), color = "blue") + # Tambahkan garis regresi
   labs(
@@ -167,7 +167,7 @@ dataset_ols <- data.frame(
   PL = mean(data$PL),
   LL = mean(data$LL),
   PI = mean(data$PI),
-  Cc = mean(data$Cc),
+  w  = mean(data$w),
   Sr = mean(data$Sr),
   ϒm = mean(data$ϒm),
   DelSt = 0.5)
@@ -182,6 +182,7 @@ for (i in 2:nrow(dataset_ols)) { # Dimulai dari baris ke 2
   
   dataset_ols$Stress[i] <- Stress
 }
+
 # Plot hasil prediksi stress vs strain
 ggplot(dataset_ols) +
   geom_line(aes(x = Strain, y = Stress)) +
