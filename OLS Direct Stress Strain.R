@@ -9,7 +9,7 @@ ggplot(RUN_R) +
   labs(title = "Data Triaxial CU", x = "Strain (%)", y = "Stress (kPa)")
 
 # Cleaning data
-df <- slice(RUN_R, -c(2030:2031)) # Hapus data outliers
+df <- slice(RUN_R, -c(2019:2020)) # Hapus data outliers
 
 # Cek database terbaru
 ggplot(df) +
@@ -77,9 +77,9 @@ plot_combined <- plot_train +
 print(plot_combined)
 
 ####### MODELLING#########
-# Training Ordinary Least Square Model Total Stress Strain
+# Training Ordinary Least Square Model Direct Stress Strain
 model_ols <- lm(
-  Stress ~ Strain + Conf + e0 + Gs + PL + LL + PI + Cc + Sr + ϒm,
+  Stress ~ Strain + Conf + e0 + Gs + PL + LL + PI + w + Sr + ϒm,
   data_training)
 summary(model_ols)
 
@@ -136,4 +136,3 @@ ggplot(Prediksi_ols, aes(x = Strain, y = Stress, group = Sampel)) +
     hjust = 1,
     vjust = c(1, 0.9), 
     color = "black")
-
